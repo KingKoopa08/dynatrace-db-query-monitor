@@ -211,7 +211,7 @@ BEGIN
     END
 
     -- Results temp table (using temp table so dynamic SQL can access it for Query Store enrichment)
-    CREATE TABLE #Results (
+    CREATE TABLE @Results (
         session_id INT NOT NULL PRIMARY KEY,
         start_time DATETIME NOT NULL,
         duration_seconds INT NOT NULL,
@@ -246,7 +246,7 @@ BEGIN
     );
 
     -- Main collection query with additional diagnostic fields
-    INSERT INTO #Results (
+    INSERT INTO @Results (
         session_id, start_time, duration_seconds, database_id, database_name, server_name,
         status, command, wait_type, wait_time, last_wait_type, cpu_time, reads, writes,
         logical_reads, row_count, granted_query_memory_kb, blocking_session_id,
@@ -323,14 +323,14 @@ BEGIN
         SELECT 'Queries collected' AS Step, @@ROWCOUNT AS [Count];
 
     -- Query Store enrichment (temp table is visible to dynamic SQL)
-    IF @IncludeQueryStoreId = 1 AND EXISTS (SELECT 1 FROM #Results)
+    IF @IncludeQueryStoreId = 1 AND EXISTS (SELECT 1 FROM @Results)
     BEGIN
         DECLARE @DbName NVARCHAR(128);
         DECLARE @Sql NVARCHAR(MAX);
 
         DECLARE db_cursor CURSOR LOCAL FAST_FORWARD READ_ONLY FOR
             SELECT DISTINCT r.database_name
-            FROM #Results r
+            FROM @Results r
             INNER JOIN sys.databases d ON d.name = r.database_name
             WHERE d.is_query_store_on = 1 AND d.state = 0;
 
@@ -340,7 +340,7 @@ BEGIN
         WHILE @@FETCH_STATUS = 0
         BEGIN
             BEGIN TRY
-                -- Dynamic SQL can access #Results directly since temp tables are session-scoped
+                -- Dynamic SQL can access @Results directly since temp tables are session-scoped
                 SET @Sql = N'
                     UPDATE r
                     SET r.query_id = qs.query_id,
@@ -350,7 +350,7 @@ BEGIN
                             WHERE qp.query_id = qs.query_id
                             ORDER BY qp.last_execution_time DESC
                         )
-                    FROM #Results r
+                    FROM @Results r
                     INNER JOIN ' + QUOTENAME(@DbName) + N'.sys.query_store_query qs
                         ON r.query_hash = qs.query_hash
                     WHERE r.database_name = @DbName AND r.query_id IS NULL;';
@@ -413,7 +413,7 @@ BEGIN
         CONVERT(VARCHAR(20), query_plan_hash, 1) AS query_plan_hash_hex,
         query_id,
         plan_id
-    FROM #Results
+    FROM @Results
     ORDER BY duration_seconds DESC;
 
     IF @Debug = 1
