@@ -222,7 +222,7 @@ EXEC dbo.usp_GetLongRunningQueries
         }
 
         Send-DynatraceLogs -EnvironmentUrl $config.dynatrace.environmentUrl -ApiToken $apiToken -LogEntries $logs
-        Write-Verbose "Sent $($logs.Count) log entries to Dynatrace"
+        Write-Verbose "Sent $(@($logs).Count) log entries to Dynatrace"
     }
 
     $elapsed = ((Get-Date) - $startTime).TotalMilliseconds
