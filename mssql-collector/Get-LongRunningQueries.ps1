@@ -134,10 +134,10 @@ EXEC dbo.usp_GetLongRunningQueries
     }
 
     # Send metrics
-    if ($metrics.Count -gt 0) {
+    if (@($metrics).Count -gt 0) {
         $metricsPayload = $metrics -join "`n"
         Send-DynatraceMetrics -EnvironmentUrl $config.dynatrace.environmentUrl -ApiToken $apiToken -MetricsData $metricsPayload
-        Write-Verbose "Sent $($metrics.Count) metrics to Dynatrace"
+        Write-Verbose "Sent $(@($metrics).Count) metrics to Dynatrace"
     }
 
     # Send logs for each query with full diagnostic details
