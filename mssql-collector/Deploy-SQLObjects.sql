@@ -321,7 +321,7 @@ BEGIN
     IF @Debug = 1
         SELECT 'Queries collected' AS Step, @@ROWCOUNT AS [Count];
 
-    -- Query Store enrichment
+    -- Query Store enrichment (temp table is visible to dynamic SQL)
     IF @IncludeQueryStoreId = 1 AND EXISTS (SELECT 1 FROM #Results)
     BEGIN
         DECLARE @DbName NVARCHAR(128);
@@ -339,6 +339,7 @@ BEGIN
         WHILE @@FETCH_STATUS = 0
         BEGIN
             BEGIN TRY
+                -- Dynamic SQL can access #Results directly since temp tables are session-scoped
                 SET @Sql = N'
                     UPDATE r
                     SET r.query_id = qs.query_id,
@@ -348,27 +349,15 @@ BEGIN
                             WHERE qp.query_id = qs.query_id
                             ORDER BY qp.last_execution_time DESC
                         )
-                    FROM @R r
+                    FROM #Results r
                     INNER JOIN ' + QUOTENAME(@DbName) + N'.sys.query_store_query qs
                         ON r.query_hash = qs.query_hash
-                    WHERE r.database_name = @Db AND r.query_id IS NULL;';
+                    WHERE r.database_name = @DbName AND r.query_id IS NULL;';
 
-                EXEC sp_executesql @Sql,
-                    N'@R TABLE (
-                        session_id INT PRIMARY KEY, start_time DATETIME, duration_seconds INT,
-                        database_id INT, database_name NVARCHAR(128), server_name NVARCHAR(128),
-                        status NVARCHAR(30), command NVARCHAR(32), wait_type NVARCHAR(60),
-                        wait_time INT, last_wait_type NVARCHAR(60), cpu_time INT,
-                        reads BIGINT, writes BIGINT, logical_reads BIGINT, row_count BIGINT,
-                        granted_query_memory_kb BIGINT, blocking_session_id INT,
-                        open_transaction_count INT, transaction_isolation_level SMALLINT,
-                        percent_complete REAL, estimated_completion_time_ms BIGINT,
-                        login_name NVARCHAR(128), host_name NVARCHAR(128), program_name NVARCHAR(128),
-                        current_statement NVARCHAR(MAX), query_text_truncated NVARCHAR(4000),
-                        query_hash BINARY(8), query_plan_hash BINARY(8),
-                        query_id BIGINT, plan_id BIGINT
-                    ) READONLY, @Db NVARCHAR(128)',
-                    #Results, @DbName;
+                EXEC sp_executesql @Sql, N'@DbName NVARCHAR(128)', @DbName;
+
+                IF @Debug = 1
+                    PRINT 'Query Store enrichment for ' + @DbName + ': ' + CAST(@@ROWCOUNT AS VARCHAR) + ' rows updated';
             END TRY
             BEGIN CATCH
                 IF @Debug = 1
