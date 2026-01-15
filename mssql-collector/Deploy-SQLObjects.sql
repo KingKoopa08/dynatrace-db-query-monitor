@@ -2,7 +2,8 @@
 ============================================================================
 Long-Running Query Monitoring for Dynatrace
 SQL Server Deployment Script
-Version: 2.0 - Added additional diagnostic fields
+Version: 2.1 - Fixed Query Store enrichment bug (was using table variable
+               which cannot be passed to sp_executesql; now uses temp table)
 
 Run this script on each SQL Server instance you want to monitor.
 Requires: maintenance database to exist
