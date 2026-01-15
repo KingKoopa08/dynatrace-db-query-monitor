@@ -88,8 +88,11 @@ EXEC dbo.usp_GetLongRunningQueries
     # Get Dynatrace API token
     $apiToken = Get-DynatraceApiToken -Config $config
 
-    # Prepare hostname
-    $hostname = $config.sqlServer.serverInstance -replace '\\.*$', ''
+    # Prepare hostname - use actual computer name, not config value
+    $hostname = $env:COMPUTERNAME
+    if ([string]::IsNullOrEmpty($hostname)) {
+        $hostname = [System.Net.Dns]::GetHostName()
+    }
 
     # Build metrics
     $metrics = @()
