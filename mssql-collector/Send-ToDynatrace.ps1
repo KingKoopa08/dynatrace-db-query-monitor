@@ -201,9 +201,9 @@ function Send-DynatraceLogs {
             Write-Verbose "Sending $(@($batch).Count) log entries to: $uri"
 
             $response = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $body -TimeoutSec 30
-            $totalSent += $batch.Count
+            $totalSent += @($batch).Count
 
-            Write-Verbose "Successfully sent batch of $($batch.Count) log entries"
+            Write-Verbose "Successfully sent batch of $(@($batch).Count) log entries"
         }
         catch {
             $statusCode = $_.Exception.Response.StatusCode.value__
