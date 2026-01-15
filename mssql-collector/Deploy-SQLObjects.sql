@@ -421,7 +421,7 @@ GO
 ----------------------------------------------------------------------
 PRINT '';
 PRINT '============================================';
-PRINT 'Deployment Complete! (v2.1)';
+PRINT 'Deployment Complete! (v2.2)';
 PRINT '============================================';
 PRINT '';
 PRINT 'Test with: EXEC maintenance.dbo.usp_GetLongRunningQueries @Debug = 1;';
