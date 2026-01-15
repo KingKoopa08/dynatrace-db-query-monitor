@@ -197,6 +197,7 @@ $VerbosePreference = "Continue"
 ## Security Notes
 
 - API tokens are never logged
-- Execution plans may contain sensitive schema information
+- Query text may contain sensitive data (sent to Dynatrace logs)
 - Credential Manager encrypts stored credentials
-- Task runs as SYSTEM by default (high privilege)
+- SQL Agent job runs under SQL Agent service account
+- Requires VIEW SERVER STATE permission on SQL Server
