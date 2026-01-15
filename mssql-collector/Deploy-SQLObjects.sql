@@ -240,9 +240,7 @@ BEGIN
         current_statement NVARCHAR(MAX) NULL,
         query_text_truncated NVARCHAR(4000) NULL,
         query_hash BINARY(8) NULL,
-        query_plan_hash BINARY(8) NULL,
-        query_id BIGINT NULL,
-        plan_id BIGINT NULL
+        query_plan_hash BINARY(8) NULL
     );
 
     -- Main collection query with additional diagnostic fields
