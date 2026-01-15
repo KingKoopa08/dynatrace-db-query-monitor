@@ -245,7 +245,7 @@ BEGIN
     );
 
     -- Main collection query with additional diagnostic fields
-    INSERT INTO @Results (
+    INSERT INTO #Results (
         session_id, start_time, duration_seconds, database_id, database_name, server_name,
         status, command, wait_type, wait_time, last_wait_type, cpu_time, reads, writes,
         logical_reads, row_count, granted_query_memory_kb, blocking_session_id,
@@ -322,14 +322,14 @@ BEGIN
         SELECT 'Queries collected' AS Step, @@ROWCOUNT AS [Count];
 
     -- Query Store enrichment
-    IF @IncludeQueryStoreId = 1 AND EXISTS (SELECT 1 FROM @Results)
+    IF @IncludeQueryStoreId = 1 AND EXISTS (SELECT 1 FROM #Results)
     BEGIN
         DECLARE @DbName NVARCHAR(128);
         DECLARE @Sql NVARCHAR(MAX);
 
         DECLARE db_cursor CURSOR LOCAL FAST_FORWARD READ_ONLY FOR
             SELECT DISTINCT r.database_name
-            FROM @Results r
+            FROM #Results r
             INNER JOIN sys.databases d ON d.name = r.database_name
             WHERE d.is_query_store_on = 1 AND d.state = 0;
 
@@ -368,7 +368,7 @@ BEGIN
                         query_hash BINARY(8), query_plan_hash BINARY(8),
                         query_id BIGINT, plan_id BIGINT
                     ) READONLY, @Db NVARCHAR(128)',
-                    @Results, @DbName;
+                    #Results, @DbName;
             END TRY
             BEGIN CATCH
                 IF @Debug = 1
@@ -423,7 +423,7 @@ BEGIN
         CONVERT(VARCHAR(20), query_plan_hash, 1) AS query_plan_hash_hex,
         query_id,
         plan_id
-    FROM @Results
+    FROM #Results
     ORDER BY duration_seconds DESC;
 
     IF @Debug = 1
