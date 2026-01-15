@@ -2,8 +2,8 @@
 ============================================================================
 Long-Running Query Monitoring for Dynatrace
 SQL Server Deployment Script
-Version: 2.1 - Fixed Query Store enrichment bug (was using table variable
-               which cannot be passed to sp_executesql; now uses temp table)
+Version: 2.2 - Query Store enrichment moved to PowerShell (ADO.NET)
+               SQL SP now uses table variable (in-memory, no tempdb I/O)
 
 Run this script on each SQL Server instance you want to monitor.
 Requires: maintenance database to exist
