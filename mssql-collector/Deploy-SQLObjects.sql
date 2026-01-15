@@ -14,7 +14,7 @@ USE [maintenance];
 GO
 
 PRINT '============================================';
-PRINT 'Deploying Long-Running Query Monitoring v2.0';
+PRINT 'Deploying Long-Running Query Monitoring v2.1';
 PRINT '============================================';
 PRINT '';
 
@@ -131,9 +131,9 @@ ELSE
 GO
 
 ----------------------------------------------------------------------
--- STEP 4: Create Main Stored Procedure (v2.0 with additional fields)
+-- STEP 4: Create Main Stored Procedure (v2.1 with additional fields)
 ----------------------------------------------------------------------
-PRINT 'Creating usp_GetLongRunningQueries procedure v2.0...';
+PRINT 'Creating usp_GetLongRunningQueries procedure v2.1...';
 GO
 
 CREATE OR ALTER PROCEDURE dbo.usp_GetLongRunningQueries
@@ -421,7 +421,7 @@ BEGIN
 END;
 GO
 
-PRINT '  - usp_GetLongRunningQueries v2.0 created';
+PRINT '  - usp_GetLongRunningQueries v2.1 created';
 GO
 
 ----------------------------------------------------------------------
@@ -474,7 +474,7 @@ GO
 ----------------------------------------------------------------------
 PRINT '';
 PRINT '============================================';
-PRINT 'Deployment Complete! (v2.0)';
+PRINT 'Deployment Complete! (v2.1)';
 PRINT '============================================';
 PRINT '';
 PRINT 'Test with: EXEC maintenance.dbo.usp_GetLongRunningQueries @Debug = 1;';
