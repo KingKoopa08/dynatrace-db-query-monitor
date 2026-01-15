@@ -1,15 +1,15 @@
 {
   "sqlServer": {
     "serverInstance": "localhost",
-    "database": "master",
-    "thresholdSeconds": 60,
-    "includeExecutionPlan": true,
-    "credentialName": null
+    "thresholdSeconds": 60
   },
   "dynatrace": {
     "environmentUrl": "https://YOUR_ENVIRONMENT_ID.live.dynatrace.com",
-    "apiTokenEnvVar": "DT_API_TOKEN",
-    "credentialName": null,
-    "apiToken": null
+    "apiTokenEnvVar": "DT_API_TOKEN"
+  },
+  "service": {
+    "intervalSeconds": 60,
+    "maxRuntimeHours": 6,
+    "serviceName": "DynatraceSQLMonitor"
   }
 }
