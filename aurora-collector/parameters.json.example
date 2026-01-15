@@ -1,0 +1,14 @@
+{
+  "AuroraHost": "your-cluster.cluster-xxxxx.us-east-1.rds.amazonaws.com",
+  "AuroraPort": "5432",
+  "AuroraDatabase": "your_database",
+  "AuroraUser": "dynatrace_monitor",
+  "AuroraPasswordSecretArn": "arn:aws:secretsmanager:us-east-1:123456789012:secret:aurora-password-xxxxx",
+  "DynatraceEnvironmentUrl": "https://abc12345.live.dynatrace.com",
+  "DynatraceApiTokenSecretArn": "arn:aws:secretsmanager:us-east-1:123456789012:secret:dynatrace-token-xxxxx",
+  "ThresholdSeconds": "60",
+  "VpcId": "vpc-xxxxxxxxx",
+  "SubnetIds": "subnet-aaaaaaa,subnet-bbbbbbb",
+  "SecurityGroupIds": "sg-xxxxxxxxx",
+  "ScheduleExpression": "rate(1 minute)"
+}

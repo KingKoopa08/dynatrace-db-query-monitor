@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Aurora PostgreSQL Long-Running Query Collector for Dynatrace
+
+Parameters:
+  AuroraHost:
+    Type: String
+    Description: Aurora PostgreSQL cluster endpoint
+
+  AuroraPort:
+    Type: String
+    Default: '5432'
+    Description: Aurora PostgreSQL port
+
+  AuroraDatabase:
+    Type: String
+    Description: Database name to monitor
+
+  AuroraUser:
+    Type: String
+    Description: Database username for monitoring
+
+  AuroraPasswordSecretArn:
+    Type: String
+    Description: ARN of Secrets Manager secret containing database password
+
+  DynatraceEnvironmentUrl:
+    Type: String
+    Description: Dynatrace environment URL (e.g., https://abc123.live.dynatrace.com)
+
+  DynatraceApiTokenSecretArn:
+    Type: String
+    Description: ARN of Secrets Manager secret containing Dynatrace API token
+
+  ThresholdSeconds:
+    Type: String
+    Default: '60'
+    Description: Query duration threshold in seconds
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID where Aurora cluster resides
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnet IDs for Lambda (should have access to Aurora and internet/NAT)
+
+  SecurityGroupIds:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+    Description: Security Group IDs for Lambda
+
+  ScheduleExpression:
+    Type: String
+    Default: 'rate(1 minute)'
+    Description: How often to run the collector (e.g., 'rate(1 minute)' or 'rate(5 minutes)')
+
+Globals:
+  Function:
+    Timeout: 30
+    Runtime: python3.11
+    MemorySize: 256
+
+Resources:
+  LongRunningQueryCollector:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: aurora-long-running-query-collector
+      Description: Collects long-running queries from Aurora PostgreSQL and sends to Dynatrace
+      Handler: lambda_function.lambda_handler
+      CodeUri: .
+      Environment:
+        Variables:
+          AURORA_HOST: !Ref AuroraHost
+          AURORA_PORT: !Ref AuroraPort
+          AURORA_DATABASE: !Ref AuroraDatabase
+          AURORA_USER: !Ref AuroraUser
+          AURORA_PASSWORD_SECRET_ARN: !Ref AuroraPasswordSecretArn
+          DT_ENVIRONMENT_URL: !Ref DynatraceEnvironmentUrl
+          DT_API_TOKEN_SECRET_ARN: !Ref DynatraceApiTokenSecretArn
+          THRESHOLD_SECONDS: !Ref ThresholdSeconds
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: !Ref SecurityGroupIds
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource:
+                - !Ref AuroraPasswordSecretArn
+                - !Ref DynatraceApiTokenSecretArn
+        - VPCAccessPolicy: {}
+      Events:
+        ScheduledEvent:
+          Type: Schedule
+          Properties:
+            Schedule: !Ref ScheduleExpression
+            Name: aurora-query-collector-schedule
+            Description: Triggers the long-running query collector
+            Enabled: true
+
+  CollectorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${LongRunningQueryCollector}'
+      RetentionInDays: 14
+
+Outputs:
+  FunctionArn:
+    Description: ARN of the Lambda function
+    Value: !GetAtt LongRunningQueryCollector.Arn
+
+  FunctionName:
+    Description: Name of the Lambda function
+    Value: !Ref LongRunningQueryCollector
+
+  LogGroupName:
+    Description: CloudWatch Log Group for the function
+    Value: !Ref CollectorLogGroup

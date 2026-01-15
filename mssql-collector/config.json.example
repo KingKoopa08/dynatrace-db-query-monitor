@@ -1,0 +1,15 @@
+{
+  "sqlServer": {
+    "serverInstance": "localhost",
+    "database": "master",
+    "thresholdSeconds": 60,
+    "includeExecutionPlan": true,
+    "credentialName": null
+  },
+  "dynatrace": {
+    "environmentUrl": "https://YOUR_ENVIRONMENT_ID.live.dynatrace.com",
+    "apiTokenEnvVar": "DT_API_TOKEN",
+    "credentialName": null,
+    "apiToken": null
+  }
+}

@@ -1,0 +1,82 @@
+# ===========================================
+# Configuration files with real values
+# ===========================================
+config.json
+parameters.json
+*.local.json
+
+# Keep examples
+!config.json.example
+!parameters.json.example
+
+# ===========================================
+# Secrets and credentials
+# ===========================================
+*.pem
+*.key
+*.pfx
+*.p12
+.env
+.env.*
+secrets.json
+credentials.json
+
+# ===========================================
+# Python
+# ===========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# ===========================================
+# AWS SAM / Lambda
+# ===========================================
+.aws-sam/
+samconfig.toml
+packaged.yaml
+response.json
+
+# ===========================================
+# PowerShell
+# ===========================================
+*.ps1xml
+
+# ===========================================
+# IDE and editors
+# ===========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ===========================================
+# Logs and temp files
+# ===========================================
+*.log
+*.tmp
+*.temp
+logs/
+
+# ===========================================
+# Test outputs
+# ===========================================
+test-results/
+coverage/
+.coverage
+htmlcov/
