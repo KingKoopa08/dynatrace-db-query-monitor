@@ -131,14 +131,14 @@ ELSE
 GO
 
 ----------------------------------------------------------------------
--- STEP 4: Create Main Stored Procedure (v2.1 with additional fields)
+-- STEP 4: Create Main Stored Procedure (v2.2)
+-- Query Store enrichment moved to PowerShell for lighter SQL footprint
 ----------------------------------------------------------------------
-PRINT 'Creating usp_GetLongRunningQueries procedure v2.1...';
+PRINT 'Creating usp_GetLongRunningQueries procedure v2.2...';
 GO
 
 CREATE OR ALTER PROCEDURE dbo.usp_GetLongRunningQueries
     @DefaultThresholdSeconds INT = 60,
-    @IncludeQueryStoreId BIT = 1,
     @Debug BIT = 0
 AS
 BEGIN
