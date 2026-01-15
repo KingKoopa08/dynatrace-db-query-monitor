@@ -261,12 +261,17 @@ WHERE q.query_hash IN ($hashList)
                 "query.plan_hash"            = if ($q.query_plan_hash_hex) { $q.query_plan_hash_hex } else { "" }
             }
 
-            # Query Store IDs (if available)
-            if ($q.query_id) {
-                $logEntry["query.store_query_id"] = [string]$q.query_id
-            }
-            if ($q.plan_id) {
-                $logEntry["query.store_plan_id"] = [string]$q.plan_id
+            # Query Store IDs (from ADO.NET lookup cache)
+            $dbName = if ($q.database_name) { $q.database_name } else { "" }
+            $qHash = if ($q.query_hash_hex) { $q.query_hash_hex.ToUpper() } else { "" }
+            if ($queryStoreCache.ContainsKey($dbName) -and $queryStoreCache[$dbName].ContainsKey($qHash)) {
+                $qsData = $queryStoreCache[$dbName][$qHash]
+                if ($qsData.query_id) {
+                    $logEntry["query.store_query_id"] = [string]$qsData.query_id
+                }
+                if ($qsData.plan_id) {
+                    $logEntry["query.store_plan_id"] = [string]$qsData.plan_id
+                }
             }
 
             # Full query text if different from current statement
