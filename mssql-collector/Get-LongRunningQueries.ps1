@@ -1,24 +1,33 @@
 <#
 .SYNOPSIS
-    Collects long-running queries from SQL Server and sends metrics/logs to Dynatrace.
+    Monitors SQL Server for long-running queries and sends data to Dynatrace.
 
 .DESCRIPTION
-    Calls the maintenance.dbo.usp_GetLongRunningQueries stored procedure and sends:
-    - Metrics to Dynatrace Metrics Ingest API
-    - Logs to Dynatrace Logs Ingest API (with full diagnostic details)
+    Runs as a persistent service that:
+    - Polls for long-running queries at configurable intervals
+    - Sends metrics and logs to Dynatrace
+    - Logs service start/restart/shutdown events
+    - Auto-restarts after configurable max runtime
 
 .PARAMETER ConfigPath
     Path to the configuration JSON file. Defaults to config.json in the script directory.
 
+.PARAMETER SingleRun
+    Run once and exit (for testing). Default is persistent service mode.
+
 .EXAMPLE
     .\Get-LongRunningQueries.ps1
-    .\Get-LongRunningQueries.ps1 -ConfigPath "C:\monitoring\config.json"
+    .\Get-LongRunningQueries.ps1 -SingleRun
+    .\Get-LongRunningQueries.ps1 -ConfigPath "C:\config\config.json"
 #>
 
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)]
-    [string]$ConfigPath
+    [string]$ConfigPath,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$SingleRun
 )
 
 Set-StrictMode -Version Latest
@@ -43,38 +52,169 @@ function Get-Configuration {
     }
 
     $config = Get-Content $Path -Raw | ConvertFrom-Json
+
+    # Set defaults for service settings
+    if (-not $config.service) {
+        $config | Add-Member -NotePropertyName "service" -NotePropertyValue ([PSCustomObject]@{
+            intervalSeconds = 60
+            maxRuntimeHours = 6
+            serviceName = "DynatraceSQLMonitor"
+        })
+    }
+    if (-not $config.service.intervalSeconds) { $config.service.intervalSeconds = 60 }
+    if (-not $config.service.maxRuntimeHours) { $config.service.maxRuntimeHours = 6 }
+    if (-not $config.service.serviceName) { $config.service.serviceName = "DynatraceSQLMonitor" }
+
     return $config
 }
 
 #endregion
 
-#region Main
+#region Service Lifecycle Logging
 
-function Main {
-    param([string]$ConfigPath)
+function Send-ServiceEvent {
+    param(
+        [Parameter(Mandatory = $true)]
+        [PSCustomObject]$Config,
+        [Parameter(Mandatory = $true)]
+        [string]$ApiToken,
+        [Parameter(Mandatory = $true)]
+        [string]$Hostname,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("START", "STOP", "RESTART", "ERROR")]
+        [string]$EventType,
+        [Parameter(Mandatory = $false)]
+        [string]$Message = ""
+    )
 
-    $startTime = Get-Date
-    Write-Verbose "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Starting collection..."
-
-    # Load configuration
-    $config = Get-Configuration -Path $ConfigPath
-
-    # Build connection string
-    $connParams = @{
-        ServerInstance = $config.sqlServer.serverInstance
-        Database       = "maintenance"
-        QueryTimeout   = 30
+    $severity = switch ($EventType) {
+        "START"   { "INFO" }
+        "STOP"    { "INFO" }
+        "RESTART" { "WARN" }
+        "ERROR"   { "ERROR" }
     }
+
+    $content = switch ($EventType) {
+        "START"   { "Long-running query monitoring service started" }
+        "STOP"    { "Long-running query monitoring service stopped (max runtime reached)" }
+        "RESTART" { "Long-running query monitoring service restarting" }
+        "ERROR"   { "Long-running query monitoring service error: $Message" }
+    }
+
+    $logEntry = @{
+        "content"           = $content
+        "log.source"        = "custom.db.monitoring_service"
+        "severity"          = $severity
+        "db.type"           = "mssql"
+        "db.host"           = $Hostname
+        "db.server"         = $Config.sqlServer.serverInstance
+        "service.name"      = $Config.service.serviceName
+        "service.event"     = $EventType
+        "service.interval"  = [string]$Config.service.intervalSeconds
+        "service.max_runtime_hours" = [string]$Config.service.maxRuntimeHours
+    }
+
+    if ($Message) {
+        $logEntry["service.message"] = $Message
+    }
+
+    try {
+        Send-DynatraceLogs -EnvironmentUrl $Config.dynatrace.environmentUrl -ApiToken $ApiToken -LogEntries @($logEntry)
+        Write-Verbose "Sent service event: $EventType"
+    }
+    catch {
+        Write-Warning "Failed to send service event to Dynatrace: $_"
+    }
+}
+
+#endregion
+
+#region Query Store Lookup
+
+function Get-QueryStoreIds {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ServerInstance,
+        [Parameter(Mandatory = $true)]
+        [array]$Queries
+    )
+
+    $queryStoreCache = @{}
+
+    # Get unique databases
+    $databases = @($Queries | Select-Object -ExpandProperty database_name -Unique | Where-Object { $_ })
+
+    foreach ($dbName in $databases) {
+        try {
+            # Get query hashes for this database
+            $dbQueryHashes = @($Queries | Where-Object { $_.database_name -eq $dbName } |
+                Select-Object -ExpandProperty query_hash_hex -Unique | Where-Object { $_ })
+
+            if ($dbQueryHashes.Count -eq 0) { continue }
+
+            # Build IN clause
+            $hashList = ($dbQueryHashes | ForEach-Object {
+                $h = $_.TrimStart("0x")
+                "0x$h"
+            }) -join ","
+
+            $qsQuery = @"
+SELECT
+    CONVERT(VARCHAR(20), q.query_hash, 1) AS query_hash_hex,
+    q.query_id,
+    (SELECT TOP 1 p.plan_id FROM sys.query_store_plan p WHERE p.query_id = q.query_id ORDER BY p.last_execution_time DESC) AS plan_id
+FROM sys.query_store_query q
+WHERE q.query_hash IN ($hashList);
+"@
+
+            $qsResults = Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbName -Query $qsQuery -QueryTimeout 10 -ErrorAction SilentlyContinue
+
+            if ($qsResults) {
+                $dbCache = @{}
+                foreach ($row in @($qsResults)) {
+                    $hash = $row.query_hash_hex.ToString().ToUpper()
+                    $dbCache[$hash] = @{
+                        query_id = $row.query_id
+                        plan_id = $row.plan_id
+                    }
+                }
+                $queryStoreCache[$dbName] = $dbCache
+                Write-Verbose "Query Store lookup for $dbName`: $($dbCache.Count) queries matched"
+            }
+        }
+        catch {
+            Write-Verbose "Query Store lookup skipped for $dbName`: $_"
+        }
+    }
+
+    return $queryStoreCache
+}
+
+#endregion
+
+#region Collection Logic
+
+function Invoke-Collection {
+    param(
+        [Parameter(Mandatory = $true)]
+        [PSCustomObject]$Config,
+        [Parameter(Mandatory = $true)]
+        [string]$ApiToken,
+        [Parameter(Mandatory = $true)]
+        [string]$Hostname
+    )
+
+    $iterationStart = Get-Date
 
     # Execute stored procedure
     $query = @"
 EXEC dbo.usp_GetLongRunningQueries
-    @DefaultThresholdSeconds = $($config.sqlServer.thresholdSeconds),
+    @DefaultThresholdSeconds = $($Config.sqlServer.thresholdSeconds),
     @Debug = 0;
 "@
 
     try {
-        $queries = Invoke-Sqlcmd @connParams -Query $query
+        $queries = Invoke-Sqlcmd -ServerInstance $Config.sqlServer.serverInstance -Database "maintenance" -Query $query -QueryTimeout 30
     }
     catch {
         Write-Error "Failed to execute stored procedure: $_"
@@ -84,73 +224,10 @@ EXEC dbo.usp_GetLongRunningQueries
     $queryCount = if ($queries) { @($queries).Count } else { 0 }
     Write-Verbose "Found $queryCount long-running queries"
 
-    # Initialize Query Store cache (populated below if queries exist)
+    # Query Store enrichment
     $queryStoreCache = @{}
-
-    # Query Store enrichment using ADO.NET (lightweight, no module dependency)
     if ($queryCount -gt 0) {
-        # Cache structure: database_name -> hashtable of query_hash -> {query_id, plan_id}
-
-        # Get unique databases that have queries
-        $databases = @($queries | Select-Object -ExpandProperty database_name -Unique | Where-Object { $_ })
-
-        foreach ($dbName in $databases) {
-            try {
-                # Check if Query Store is enabled and get query IDs using ADO.NET
-                $connString = "Server=$($config.sqlServer.serverInstance);Database=$dbName;Integrated Security=True;Application Name=DynatraceMonitor"
-                $conn = New-Object System.Data.SqlClient.SqlConnection($connString)
-                $conn.Open()
-
-                # Get query hashes for this database
-                $dbQueryHashes = @($queries | Where-Object { $_.database_name -eq $dbName } | Select-Object -ExpandProperty query_hash_hex -Unique | Where-Object { $_ })
-
-                if ($dbQueryHashes.Count -gt 0) {
-                    # Build IN clause for query hashes
-                    $hashList = ($dbQueryHashes | ForEach-Object { "0x" + $_.TrimStart("0x") }) -join ","
-
-                    $qsQuery = @"
-SELECT
-    CONVERT(VARCHAR(20), q.query_hash, 1) AS query_hash_hex,
-    q.query_id,
-    (SELECT TOP 1 p.plan_id FROM sys.query_store_plan p WHERE p.query_id = q.query_id ORDER BY p.last_execution_time DESC) AS plan_id
-FROM sys.query_store_query q
-WHERE q.query_hash IN ($hashList)
-"@
-                    $cmd = $conn.CreateCommand()
-                    $cmd.CommandText = $qsQuery
-                    $cmd.CommandTimeout = 10
-
-                    $reader = $cmd.ExecuteReader()
-                    $dbCache = @{}
-                    while ($reader.Read()) {
-                        $hash = $reader["query_hash_hex"].ToString().ToUpper()
-                        $dbCache[$hash] = @{
-                            query_id = if ($reader["query_id"] -ne [DBNull]::Value) { $reader["query_id"] } else { $null }
-                            plan_id = if ($reader["plan_id"] -ne [DBNull]::Value) { $reader["plan_id"] } else { $null }
-                        }
-                    }
-                    $reader.Close()
-                    $queryStoreCache[$dbName] = $dbCache
-
-                    Write-Verbose "Query Store lookup for $dbName`: $($dbCache.Count) queries matched"
-                }
-
-                $conn.Close()
-            }
-            catch {
-                Write-Verbose "Query Store lookup failed for $dbName`: $_"
-                # Continue without Query Store data for this database
-            }
-        }
-    }
-
-    # Get Dynatrace API token
-    $apiToken = Get-DynatraceApiToken -Config $config
-
-    # Prepare hostname - use actual computer name, not config value
-    $hostname = $env:COMPUTERNAME
-    if ([string]::IsNullOrEmpty($hostname)) {
-        $hostname = [System.Net.Dns]::GetHostName()
+        $queryStoreCache = Get-QueryStoreIds -ServerInstance $Config.sqlServer.serverInstance -Queries $queries
     }
 
     # Build metrics
@@ -171,35 +248,34 @@ WHERE q.query_hash IN ($hashList)
             $dbTotalLogicalReads = ($dbGroup.Group | Measure-Object -Property logical_reads -Sum).Sum
             $dbTotalMemoryKb = ($dbGroup.Group | Measure-Object -Property granted_query_memory_kb -Sum).Sum
 
-            $metrics += "custom.db.long_queries.count,db.type=mssql,db.name=$dbName,host=$hostname $dbCount"
-            $metrics += "custom.db.long_queries.max_duration_seconds,db.type=mssql,db.name=$dbName,host=$hostname $dbMaxDuration"
-            $metrics += "custom.db.long_queries.total_cpu_ms,db.type=mssql,db.name=$dbName,host=$hostname $dbTotalCpu"
-            $metrics += "custom.db.long_queries.total_reads,db.type=mssql,db.name=$dbName,host=$hostname $dbTotalReads"
-            $metrics += "custom.db.long_queries.total_logical_reads,db.type=mssql,db.name=$dbName,host=$hostname $dbTotalLogicalReads"
-            $metrics += "custom.db.long_queries.total_memory_kb,db.type=mssql,db.name=$dbName,host=$hostname $dbTotalMemoryKb"
+            $metrics += "custom.db.long_queries.count,db.type=mssql,db.name=$dbName,host=$Hostname $dbCount"
+            $metrics += "custom.db.long_queries.max_duration_seconds,db.type=mssql,db.name=$dbName,host=$Hostname $dbMaxDuration"
+            $metrics += "custom.db.long_queries.total_cpu_ms,db.type=mssql,db.name=$dbName,host=$Hostname $dbTotalCpu"
+            $metrics += "custom.db.long_queries.total_reads,db.type=mssql,db.name=$dbName,host=$Hostname $dbTotalReads"
+            $metrics += "custom.db.long_queries.total_logical_reads,db.type=mssql,db.name=$dbName,host=$Hostname $dbTotalLogicalReads"
+            $metrics += "custom.db.long_queries.total_memory_kb,db.type=mssql,db.name=$dbName,host=$Hostname $dbTotalMemoryKb"
         }
 
         # Overall metrics
         $maxDuration = ($queries | Measure-Object -Property duration_seconds -Maximum).Maximum
         $blockedCount = @($queries | Where-Object { $_.blocking_session_id -gt 0 }).Count
 
-        $metrics += "custom.db.long_queries.total_count,db.type=mssql,host=$hostname $queryCount"
-        $metrics += "custom.db.long_queries.overall_max_duration_seconds,db.type=mssql,host=$hostname $maxDuration"
-        $metrics += "custom.db.long_queries.blocked_count,db.type=mssql,host=$hostname $blockedCount"
+        $metrics += "custom.db.long_queries.total_count,db.type=mssql,host=$Hostname $queryCount"
+        $metrics += "custom.db.long_queries.overall_max_duration_seconds,db.type=mssql,host=$Hostname $maxDuration"
+        $metrics += "custom.db.long_queries.blocked_count,db.type=mssql,host=$Hostname $blockedCount"
     }
     else {
-        # No long-running queries - send zero
-        $metrics += "custom.db.long_queries.total_count,db.type=mssql,host=$hostname 0"
+        $metrics += "custom.db.long_queries.total_count,db.type=mssql,host=$Hostname 0"
     }
 
     # Send metrics
     if (@($metrics).Count -gt 0) {
         $metricsPayload = $metrics -join "`n"
-        Send-DynatraceMetrics -EnvironmentUrl $config.dynatrace.environmentUrl -ApiToken $apiToken -MetricsData $metricsPayload
+        Send-DynatraceMetrics -EnvironmentUrl $Config.dynatrace.environmentUrl -ApiToken $ApiToken -MetricsData $metricsPayload
         Write-Verbose "Sent $(@($metrics).Count) metrics to Dynatrace"
     }
 
-    # Send logs for each query with full diagnostic details
+    # Send logs for each query
     if ($queryCount -gt 0) {
         $logs = @()
 
@@ -207,64 +283,41 @@ WHERE q.query_hash IN ($hashList)
             $severity = if ($q.duration_seconds -gt 300) { "ERROR" } else { "WARN" }
 
             $logEntry = @{
-                # Core identifiers
                 "content"                    = if ($q.current_statement) { $q.current_statement } else { "[No statement text]" }
                 "log.source"                 = "custom.db.long_running_query"
                 "severity"                   = $severity
-
-                # Database info
                 "db.type"                    = "mssql"
                 "db.name"                    = if ($q.database_name) { $q.database_name } else { "unknown" }
-                "db.host"                    = $hostname
-                "db.server"                  = if ($q.server_name) { $q.server_name } else { $hostname }
-
-                # Session info
+                "db.host"                    = $Hostname
+                "db.server"                  = if ($q.server_name) { $q.server_name } else { $Hostname }
                 "query.session_id"           = [string]$q.session_id
                 "query.login_name"           = if ($q.login_name) { $q.login_name } else { "" }
                 "query.client_host"          = if ($q.host_name) { $q.host_name } else { "" }
                 "query.program_name"         = if ($q.program_name) { $q.program_name } else { "" }
-
-                # Timing
                 "query.duration_seconds"     = [string]$q.duration_seconds
                 "query.start_time"           = if ($q.start_time) { $q.start_time.ToString("yyyy-MM-ddTHH:mm:ss") } else { "" }
                 "query.cpu_time_ms"          = [string]$q.cpu_time
-
-                # Status
                 "query.status"               = if ($q.status) { $q.status } else { "" }
                 "query.command"              = if ($q.command) { $q.command } else { "" }
-
-                # Wait info
                 "query.wait_type"            = if ($q.wait_type) { $q.wait_type } else { "" }
                 "query.wait_time_ms"         = [string]$q.wait_time
                 "query.last_wait_type"       = if ($q.last_wait_type) { $q.last_wait_type } else { "" }
-
-                # I/O
                 "query.reads"                = [string]$q.reads
                 "query.writes"               = [string]$q.writes
                 "query.logical_reads"        = [string]$q.logical_reads
                 "query.row_count"            = [string]$q.row_count
-
-                # Memory
                 "query.granted_memory_kb"    = [string]$q.granted_query_memory_kb
-
-                # Blocking
                 "query.blocking_session_id"  = [string]$q.blocking_session_id
                 "query.is_blocked"           = if ($q.blocking_session_id -gt 0) { "true" } else { "false" }
-
-                # Transaction
                 "query.open_transaction_count" = [string]$q.open_transaction_count
                 "query.isolation_level"      = if ($q.isolation_level_desc) { $q.isolation_level_desc } else { "" }
-
-                # Progress (for long operations like backups)
                 "query.percent_complete"     = [string]$q.percent_complete
                 "query.estimated_completion_ms" = [string]$q.estimated_completion_time_ms
-
-                # Query Store correlation
                 "query.hash"                 = if ($q.query_hash_hex) { $q.query_hash_hex } else { "" }
                 "query.plan_hash"            = if ($q.query_plan_hash_hex) { $q.query_plan_hash_hex } else { "" }
             }
 
-            # Query Store IDs (from ADO.NET lookup cache)
+            # Query Store IDs from cache
             $dbName = if ($q.database_name) { $q.database_name } else { "" }
             $qHash = if ($q.query_hash_hex) { $q.query_hash_hex.ToUpper() } else { "" }
             if ($queryStoreCache.ContainsKey($dbName) -and $queryStoreCache[$dbName].ContainsKey($qHash)) {
@@ -277,7 +330,7 @@ WHERE q.query_hash IN ($hashList)
                 }
             }
 
-            # Full query text if different from current statement
+            # Full query text if different
             if ($q.query_text_truncated -and $q.query_text_truncated -ne $q.current_statement) {
                 $logEntry["query.full_text"] = $q.query_text_truncated
             }
@@ -285,21 +338,104 @@ WHERE q.query_hash IN ($hashList)
             $logs += $logEntry
         }
 
-        Send-DynatraceLogs -EnvironmentUrl $config.dynatrace.environmentUrl -ApiToken $apiToken -LogEntries $logs
+        Send-DynatraceLogs -EnvironmentUrl $Config.dynatrace.environmentUrl -ApiToken $ApiToken -LogEntries $logs
         Write-Verbose "Sent $(@($logs).Count) log entries to Dynatrace"
     }
 
-    $elapsed = ((Get-Date) - $startTime).TotalMilliseconds
-    Write-Verbose "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Collection completed in $($elapsed)ms"
+    $elapsed = ((Get-Date) - $iterationStart).TotalMilliseconds
+    Write-Verbose "Collection completed in $($elapsed)ms"
 }
 
-# Execute
+#endregion
+
+#region Main Service Loop
+
+function Start-ServiceLoop {
+    param(
+        [Parameter(Mandatory = $true)]
+        [PSCustomObject]$Config,
+        [Parameter(Mandatory = $true)]
+        [string]$ApiToken,
+        [Parameter(Mandatory = $true)]
+        [string]$Hostname
+    )
+
+    $serviceStartTime = Get-Date
+    $maxRuntimeSeconds = $Config.service.maxRuntimeHours * 3600
+    $intervalSeconds = $Config.service.intervalSeconds
+
+    Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Service starting..."
+    Write-Host "  Interval: $intervalSeconds seconds"
+    Write-Host "  Max runtime: $($Config.service.maxRuntimeHours) hours"
+    Write-Host "  Server: $($Config.sqlServer.serverInstance)"
+
+    # Send startup event to Dynatrace
+    Send-ServiceEvent -Config $Config -ApiToken $ApiToken -Hostname $Hostname -EventType "START"
+
+    $iterationCount = 0
+
+    try {
+        while ($true) {
+            $iterationCount++
+            $elapsed = ((Get-Date) - $serviceStartTime).TotalSeconds
+
+            # Check max runtime
+            if ($elapsed -ge $maxRuntimeSeconds) {
+                Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Max runtime reached ($($Config.service.maxRuntimeHours) hours). Stopping for restart..."
+                Send-ServiceEvent -Config $Config -ApiToken $ApiToken -Hostname $Hostname -EventType "STOP"
+                break
+            }
+
+            Write-Verbose "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Iteration $iterationCount (runtime: $([math]::Round($elapsed/60, 1)) min)"
+
+            try {
+                Invoke-Collection -Config $Config -ApiToken $ApiToken -Hostname $Hostname
+            }
+            catch {
+                Write-Warning "Collection failed: $_"
+                Send-ServiceEvent -Config $Config -ApiToken $ApiToken -Hostname $Hostname -EventType "ERROR" -Message $_.ToString()
+            }
+
+            # Sleep for interval
+            Start-Sleep -Seconds $intervalSeconds
+        }
+    }
+    finally {
+        Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Service stopped after $iterationCount iterations"
+    }
+}
+
+#endregion
+
+#region Entry Point
+
 try {
-    Main -ConfigPath $ConfigPath
-    exit 0
+    # Load configuration
+    $config = Get-Configuration -Path $ConfigPath
+
+    # Get API token
+    $apiToken = Get-DynatraceApiToken -Config $config
+
+    # Get hostname
+    $hostname = $env:COMPUTERNAME
+    if ([string]::IsNullOrEmpty($hostname)) {
+        $hostname = [System.Net.Dns]::GetHostName()
+    }
+
+    if ($SingleRun) {
+        # Single execution mode (for testing)
+        Write-Verbose "Running in single-run mode..."
+        Invoke-Collection -Config $config -ApiToken $apiToken -Hostname $hostname
+        exit 0
+    }
+    else {
+        # Persistent service mode
+        Start-ServiceLoop -Config $config -ApiToken $apiToken -Hostname $hostname
+        exit 0  # Clean exit for NSSM to restart
+    }
 }
 catch {
-    Write-Error "Script failed: $_"
+    Write-Error "Service failed: $_"
     exit 1
 }
 
