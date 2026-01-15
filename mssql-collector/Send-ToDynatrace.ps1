@@ -179,8 +179,9 @@ function Send-DynatraceLogs {
     $batchSize = 100
     $totalSent = 0
 
-    for ($i = 0; $i -lt $LogEntries.Count; $i += $batchSize) {
-        $batch = $LogEntries[$i..([Math]::Min($i + $batchSize - 1, $LogEntries.Count - 1))]
+    $entriesArray = @($LogEntries)
+    for ($i = 0; $i -lt $entriesArray.Count; $i += $batchSize) {
+        $batch = @($entriesArray[$i..([Math]::Min($i + $batchSize - 1, $entriesArray.Count - 1))])
 
         # Add timestamp if not present
         foreach ($entry in $batch) {
