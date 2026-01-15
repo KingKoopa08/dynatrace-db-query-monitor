@@ -8,8 +8,9 @@ PowerShell-based collector that monitors SQL Server for long-running queries and
 |------|-------------|
 | `Get-LongRunningQueries.ps1` | Main collector script |
 | `Send-ToDynatrace.ps1` | Dynatrace API helper functions |
-| `config.json` | Configuration file |
-| `Install-ScheduledTask.ps1` | Windows Task Scheduler setup |
+| `Deploy-SQLObjects.sql` | Creates stored procedure and exclusions table |
+| `Deploy-SQLAgentJob.sql` | Creates SQL Agent job (runs every minute) |
+| `config.json.example` | Configuration template |
 
 ## Prerequisites
 
