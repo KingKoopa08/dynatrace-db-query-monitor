@@ -322,55 +322,8 @@ BEGIN
     IF @Debug = 1
         SELECT 'Queries collected' AS Step, @@ROWCOUNT AS [Count];
 
-    -- Query Store enrichment (temp table is visible to dynamic SQL)
-    IF @IncludeQueryStoreId = 1 AND EXISTS (SELECT 1 FROM @Results)
-    BEGIN
-        DECLARE @DbName NVARCHAR(128);
-        DECLARE @Sql NVARCHAR(MAX);
-
-        DECLARE db_cursor CURSOR LOCAL FAST_FORWARD READ_ONLY FOR
-            SELECT DISTINCT r.database_name
-            FROM @Results r
-            INNER JOIN sys.databases d ON d.name = r.database_name
-            WHERE d.is_query_store_on = 1 AND d.state = 0;
-
-        OPEN db_cursor;
-        FETCH NEXT FROM db_cursor INTO @DbName;
-
-        WHILE @@FETCH_STATUS = 0
-        BEGIN
-            BEGIN TRY
-                -- Dynamic SQL can access @Results directly since temp tables are session-scoped
-                SET @Sql = N'
-                    UPDATE r
-                    SET r.query_id = qs.query_id,
-                        r.plan_id = (
-                            SELECT TOP 1 qp.plan_id
-                            FROM ' + QUOTENAME(@DbName) + N'.sys.query_store_plan qp
-                            WHERE qp.query_id = qs.query_id
-                            ORDER BY qp.last_execution_time DESC
-                        )
-                    FROM @Results r
-                    INNER JOIN ' + QUOTENAME(@DbName) + N'.sys.query_store_query qs
-                        ON r.query_hash = qs.query_hash
-                    WHERE r.database_name = @DbName AND r.query_id IS NULL;';
-
-                EXEC sp_executesql @Sql, N'@DbName NVARCHAR(128)', @DbName;
-
-                IF @Debug = 1
-                    PRINT 'Query Store enrichment for ' + @DbName + ': ' + CAST(@@ROWCOUNT AS VARCHAR) + ' rows updated';
-            END TRY
-            BEGIN CATCH
-                IF @Debug = 1
-                    PRINT 'Query Store lookup failed for ' + @DbName + ': ' + ERROR_MESSAGE();
-            END CATCH
-
-            FETCH NEXT FROM db_cursor INTO @DbName;
-        END
-
-        CLOSE db_cursor;
-        DEALLOCATE db_cursor;
-    END
+    -- Note: Query Store enrichment (query_id, plan_id) is done in PowerShell
+    -- using ADO.NET for lighter SQL footprint. query_hash is returned for lookup.
 
     -- Return results with isolation level description
     SELECT
