@@ -84,9 +84,12 @@ EXEC dbo.usp_GetLongRunningQueries
     $queryCount = if ($queries) { @($queries).Count } else { 0 }
     Write-Verbose "Found $queryCount long-running queries"
 
+    # Initialize Query Store cache (populated below if queries exist)
+    $queryStoreCache = @{}
+
     # Query Store enrichment using ADO.NET (lightweight, no module dependency)
     if ($queryCount -gt 0) {
-        $queryStoreCache = @{}  # Cache: database_name -> hashtable of query_hash -> {query_id, plan_id}
+        # Cache structure: database_name -> hashtable of query_hash -> {query_id, plan_id}
 
         # Get unique databases that have queries
         $databases = @($queries | Select-Object -ExpandProperty database_name -Unique | Where-Object { $_ })
