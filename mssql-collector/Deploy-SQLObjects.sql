@@ -203,9 +203,7 @@ BEGIN
             CAST(NULL AS NVARCHAR(MAX)) AS current_statement,
             CAST(NULL AS NVARCHAR(4000)) AS query_text_truncated,
             CAST(NULL AS VARCHAR(20)) AS query_hash_hex,
-            CAST(NULL AS VARCHAR(20)) AS query_plan_hash_hex,
-            CAST(NULL AS BIGINT) AS query_id,
-            CAST(NULL AS BIGINT) AS plan_id
+            CAST(NULL AS VARCHAR(20)) AS query_plan_hash_hex
         WHERE 1 = 0;
         RETURN;
     END
