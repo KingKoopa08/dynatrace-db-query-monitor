@@ -122,7 +122,7 @@ EXEC dbo.usp_GetLongRunningQueries
 
         # Overall metrics
         $maxDuration = ($queries | Measure-Object -Property duration_seconds -Maximum).Maximum
-        $blockedCount = ($queries | Where-Object { $_.blocking_session_id -gt 0 }).Count
+        $blockedCount = @($queries | Where-Object { $_.blocking_session_id -gt 0 }).Count
 
         $metrics += "custom.db.long_queries.total_count,db.type=mssql,host=$hostname $queryCount"
         $metrics += "custom.db.long_queries.overall_max_duration_seconds,db.type=mssql,host=$hostname $maxDuration"
