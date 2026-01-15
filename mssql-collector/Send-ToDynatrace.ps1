@@ -198,7 +198,7 @@ function Send-DynatraceLogs {
         }
 
         try {
-            Write-Verbose "Sending $($batch.Count) log entries to: $uri"
+            Write-Verbose "Sending $(@($batch).Count) log entries to: $uri"
 
             $response = Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $body -TimeoutSec 30
             $totalSent += $batch.Count
