@@ -361,9 +361,7 @@ BEGIN
         current_statement,
         query_text_truncated,
         CONVERT(VARCHAR(20), query_hash, 1) AS query_hash_hex,
-        CONVERT(VARCHAR(20), query_plan_hash, 1) AS query_plan_hash_hex,
-        query_id,
-        plan_id
+        CONVERT(VARCHAR(20), query_plan_hash, 1) AS query_plan_hash_hex
     FROM @Results
     ORDER BY duration_seconds DESC;
 
@@ -372,7 +370,7 @@ BEGIN
 END;
 GO
 
-PRINT '  - usp_GetLongRunningQueries v2.1 created';
+PRINT '  - usp_GetLongRunningQueries v2.2 created';
 GO
 
 ----------------------------------------------------------------------
