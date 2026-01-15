@@ -6,7 +6,7 @@ PowerShell-based collector that monitors SQL Server for long-running queries and
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Windows Service (via NSSM)                                     │
+│  Windows Task Scheduler (runs at startup)                       │
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  Get-LongRunningQueries.ps1 (persistent loop)             │  │
 │  │                                                           │  │
@@ -17,19 +17,21 @@ PowerShell-based collector that monitors SQL Server for long-running queries and
 │  │      4. Send logs to Dynatrace                           │  │
 │  │      5. Sleep (intervalSeconds)                          │  │
 │  │                                                           │  │
-│  │  Exit → NSSM auto-restarts → Log restart event           │  │
+│  │  Exit → Task Scheduler auto-restarts                      │  │
 │  └───────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+**Overhead:** One PowerShell.exe process (~50-100MB), minimal CPU (mostly sleeping).
 
 ## Files
 
 | File | Description |
 |------|-------------|
-| `Get-LongRunningQueries.ps1` | Main collector script (persistent service) |
+| `Get-LongRunningQueries.ps1` | Main collector script (persistent loop) |
 | `Send-ToDynatrace.ps1` | Dynatrace API helper functions |
 | `Deploy-SQLObjects.sql` | Creates stored procedure and exclusions table |
-| `Install-Service.ps1` | NSSM Windows Service installer |
+| `Install-ScheduledTask.ps1` | Windows Task Scheduler installer |
 | `config.json.example` | Configuration template |
 
 ## Prerequisites
@@ -39,11 +41,8 @@ PowerShell-based collector that monitors SQL Server for long-running queries and
    ```powershell
    Install-Module -Name SqlServer -Scope AllUsers -Force
    ```
-3. **NSSM** (Non-Sucking Service Manager):
-   - Download from: https://nssm.cc/download
-   - Extract `nssm.exe` to the script directory or add to PATH
-4. **SQL Server maintenance database** with the stored procedure deployed
-5. **Dynatrace API token** with `metrics.ingest` and `logs.ingest` scopes
+3. **SQL Server maintenance database** with the stored procedure deployed
+4. **Dynatrace API token** with `metrics.ingest` and `logs.ingest` scopes
 
 ## Configuration
 
@@ -77,17 +76,17 @@ Copy `config.json.example` to `config.json` and edit:
 | `apiTokenEnvVar` | Environment variable containing API token | `DT_API_TOKEN` |
 | `intervalSeconds` | Polling interval in seconds | 60 |
 | `maxRuntimeHours` | Hours before automatic restart | 6 |
-| `serviceName` | Windows service name | `DynatraceSQLMonitor` |
+| `serviceName` | Task name in Task Scheduler | `DynatraceSQLMonitor` |
 
 ## Deployment
 
 ### Step 1: Deploy SQL Objects
 
-Run `Deploy-SQLObjects.sql` in SSMS on each SQL Server instance:
+Run `Deploy-SQLObjects.sql` in SSMS (or via sqlcmd on Server Core):
 
-```sql
--- Creates maintenance.dbo.usp_GetLongRunningQueries
--- Creates exclusions table for filtering
+```powershell
+# Server Core - run via sqlcmd
+sqlcmd -S localhost -d master -i Deploy-SQLObjects.sql
 ```
 
 ### Step 2: Set Up API Token
@@ -95,79 +94,87 @@ Run `Deploy-SQLObjects.sql` in SSMS on each SQL Server instance:
 ```powershell
 # Set machine-level environment variable (required for service account)
 [Environment]::SetEnvironmentVariable('DT_API_TOKEN', 'dt0c01.xxxxxx', 'Machine')
+
+# Verify
+[Environment]::GetEnvironmentVariable('DT_API_TOKEN', 'Machine')
 ```
 
-### Step 3: Create Service Account (Recommended)
-
-```powershell
-# Create a dedicated service account with minimal permissions
-# Grant it:
-#   - VIEW SERVER STATE on SQL Server
-#   - Read access to script directory
-#   - Access to DT_API_TOKEN environment variable
-```
-
-### Step 4: Install Windows Service
+### Step 3: Install Scheduled Task
 
 ```powershell
 # Run as Administrator
 
-# Install with Local System (simple, but high privilege)
-.\Install-Service.ps1
+# Install as SYSTEM (simplest)
+.\Install-ScheduledTask.ps1
 
 # Install with service account (recommended)
-.\Install-Service.ps1 -ServiceAccount "DOMAIN\svc_sqlmonitor" -ServicePassword (Read-Host -AsSecureString)
-
-# Install with gMSA (no password needed)
-.\Install-Service.ps1 -ServiceAccount "DOMAIN\gMSA_SQLMon$"
+.\Install-ScheduledTask.ps1 -ServiceAccount "DOMAIN\svc_sqlmonitor" -ServicePassword (Read-Host -AsSecureString)
 ```
 
-### Step 5: Verify
+### Step 4: Verify
 
 ```powershell
-# Check service status
-Get-Service DynatraceSQLMonitor
+# Check task status
+Get-ScheduledTask -TaskName "DynatraceSQLMonitor" -TaskPath "\Dynatrace\"
+
+# Check if running
+Get-ScheduledTaskInfo -TaskName "DynatraceSQLMonitor" -TaskPath "\Dynatrace\"
 
 # View logs
 Get-Content .\logs\service.log -Tail 50
-
-# Check Dynatrace for service start event
-# Search: log.source="custom.db.monitoring_service"
 ```
 
-## Service Management
+## Task Management (Server Core)
+
+All commands work via PowerShell - no GUI required:
 
 ```powershell
-# Start/Stop
-Start-Service DynatraceSQLMonitor
-Stop-Service DynatraceSQLMonitor
+# Variables for convenience
+$TaskName = "DynatraceSQLMonitor"
+$TaskPath = "\Dynatrace\"
 
-# Restart
-Restart-Service DynatraceSQLMonitor
+# Status
+Get-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
 
-# View status
-Get-Service DynatraceSQLMonitor
+# Detailed info (last run, next run, result)
+Get-ScheduledTaskInfo -TaskName $TaskName -TaskPath $TaskPath
 
-# View logs
-Get-Content .\logs\service.log -Tail 100 -Wait
+# Start
+Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
+
+# Stop
+Stop-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
+
+# Disable (keeps task but prevents it from running)
+Disable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
+
+# Enable
+Enable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
 
 # Uninstall
-.\Install-Service.ps1 -Uninstall
+.\Install-ScheduledTask.ps1 -Uninstall
+
+# View logs
+Get-Content .\logs\service.log -Tail 100
+Get-Content .\logs\service.log -Tail 50 -Wait  # Live tail
+
+# View errors
+Get-Content .\logs\service-error.log -Tail 50
 ```
 
 ## Testing
 
-### Test Single Run (No Service)
+### Test Single Run
 
 ```powershell
-# Single collection run for testing
+# Single collection run for testing (no loop)
 .\Get-LongRunningQueries.ps1 -SingleRun -Verbose
 ```
 
 ### Create Test Long-Running Query
 
 ```sql
--- Run in SSMS to create a test query
+-- Run in SSMS or sqlcmd to create a test query
 WAITFOR DELAY '00:02:00'; -- Wait 2 minutes
 SELECT 1;
 ```
@@ -184,37 +191,58 @@ SELECT 1;
 
 The service logs these events to Dynatrace:
 
-| Event | Severity | Description |
-|-------|----------|-------------|
+| Event | Severity | When |
+|-------|----------|------|
 | `START` | INFO | Service started |
-| `STOP` | INFO | Service stopped (max runtime reached, will restart) |
-| `ERROR` | ERROR | Collection failed (includes error message) |
+| `STOP` | INFO | Max runtime reached (will restart) |
+| `ERROR` | ERROR | Collection failed |
 
 Search in Dynatrace:
 ```
-log.source="custom.db.monitoring_service" AND service.event="START"
+log.source="custom.db.monitoring_service"
 ```
 
 ## Troubleshooting
 
-### Service Won't Start
+### Task Won't Start
 
-1. Check logs: `Get-Content .\logs\service-error.log`
-2. Verify config.json is valid JSON
-3. Verify SQL Server is accessible
-4. Verify DT_API_TOKEN environment variable is set at machine level
+```powershell
+# Check task status
+Get-ScheduledTask -TaskName "DynatraceSQLMonitor" -TaskPath "\Dynatrace\"
+
+# Check last result (0 = success)
+(Get-ScheduledTaskInfo -TaskName "DynatraceSQLMonitor" -TaskPath "\Dynatrace\").LastTaskResult
+
+# Check error log
+Get-Content .\logs\service-error.log -Tail 50
+
+# Common issues:
+# - config.json missing or invalid
+# - DT_API_TOKEN not set at machine level
+# - SQL Server not accessible
+# - SqlServer module not installed
+```
 
 ### No Data in Dynatrace
 
-1. Check service is running: `Get-Service DynatraceSQLMonitor`
-2. Check logs for errors: `Get-Content .\logs\service.log -Tail 50`
-3. Test single run: `.\Get-LongRunningQueries.ps1 -SingleRun -Verbose`
-4. Verify API token has correct scopes
+```powershell
+# 1. Verify task is running
+Get-ScheduledTask -TaskName "DynatraceSQLMonitor" -TaskPath "\Dynatrace\" | Select-Object State
+
+# 2. Check logs
+Get-Content .\logs\service.log -Tail 50
+
+# 3. Test manually
+.\Get-LongRunningQueries.ps1 -SingleRun -Verbose
+
+# 4. Verify API token
+[Environment]::GetEnvironmentVariable('DT_API_TOKEN', 'Machine')
+```
 
 ### High Memory Usage
 
-The service automatically restarts after `maxRuntimeHours` to prevent memory leaks.
-Reduce this value if memory is a concern:
+The script automatically restarts after `maxRuntimeHours` to prevent memory leaks.
+Reduce this value if needed:
 
 ```json
 {
@@ -222,6 +250,12 @@ Reduce this value if memory is a concern:
     "maxRuntimeHours": 2
   }
 }
+```
+
+Then restart the task:
+```powershell
+Stop-ScheduledTask -TaskName "DynatraceSQLMonitor" -TaskPath "\Dynatrace\"
+Start-ScheduledTask -TaskName "DynatraceSQLMonitor" -TaskPath "\Dynatrace\"
 ```
 
 ### Query Store IDs Missing
@@ -232,8 +266,11 @@ Query Store IDs only populate if:
 
 ## Security Notes
 
-- API tokens are stored in environment variables, never in config files
-- Service account should have minimal required permissions
+- API tokens stored in machine-level environment variables
+- Service account should have minimal required permissions:
+  - `VIEW SERVER STATE` on SQL Server
+  - Read access to script directory
+  - Network access to Dynatrace API
 - Query text sent to Dynatrace may contain sensitive data
-- Consider using gMSA for service account (no password management)
-- Log files are stored locally and rotated at 10MB
+- Log files stored locally in `.\logs\` directory
+- Task runs with "Highest" privilege level (required for SQL access)
