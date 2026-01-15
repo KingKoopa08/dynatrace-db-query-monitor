@@ -210,8 +210,8 @@ BEGIN
         RETURN;
     END
 
-    -- Results temp table (using temp table so dynamic SQL can access it for Query Store enrichment)
-    CREATE TABLE @Results (
+    -- Results table variable (in-memory, no tempdb I/O)
+    DECLARE @Results TABLE (
         session_id INT NOT NULL PRIMARY KEY,
         start_time DATETIME NOT NULL,
         duration_seconds INT NOT NULL,
