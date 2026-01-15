@@ -193,7 +193,7 @@ function Send-DynatraceLogs {
         $body = $batch | ConvertTo-Json -Depth 10 -Compress
 
         # Ensure it's always an array
-        if ($batch.Count -eq 1) {
+        if (@($batch).Count -eq 1) {
             $body = "[$body]"
         }
 
