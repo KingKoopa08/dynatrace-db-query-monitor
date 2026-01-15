@@ -94,31 +94,52 @@ Set-DynatraceCredential -Target "DynatraceApiToken" -ApiToken "dt0c01.xxxxxx"
 .\Get-LongRunningQueries.ps1 -ConfigPath "C:\path\to\config.json"
 ```
 
-### Scheduled Task Installation
-```powershell
-# Install with default settings (60 second interval)
-.\Install-ScheduledTask.ps1
+### SQL Agent Job Deployment
 
-# Install with custom interval
-.\Install-ScheduledTask.ps1 -IntervalSeconds 30
+1. **Update script path** in `Deploy-SQLAgentJob.sql`:
+   ```sql
+   DECLARE @ScriptPath NVARCHAR(500) = N'C:\Program Files\Scripts\SqlAgent\mssql-collector\Get-LongRunningQueries.ps1';
+   ```
 
-# Remove the scheduled task
-.\Install-ScheduledTask.ps1 -Uninstall
-```
+2. **Run the deployment script** in SSMS:
+   ```sql
+   -- Execute Deploy-SQLAgentJob.sql
+   ```
 
-### Task Management
-```powershell
-# View task status
-Get-ScheduledTask -TaskName "DynatraceSQLQueryMonitor"
+3. **Verify the job was created:**
+   ```sql
+   EXEC msdb.dbo.sp_help_job @job_name = 'Dynatrace - Long Running Query Monitor';
+   ```
 
-# Run task immediately
-Start-ScheduledTask -TaskName "DynatraceSQLQueryMonitor"
+### Job Management
+```sql
+-- Run job immediately
+EXEC msdb.dbo.sp_start_job @job_name = 'Dynatrace - Long Running Query Monitor';
 
-# Stop task
-Stop-ScheduledTask -TaskName "DynatraceSQLQueryMonitor"
+-- Disable job
+EXEC msdb.dbo.sp_update_job @job_name = 'Dynatrace - Long Running Query Monitor', @enabled = 0;
 
-# View task info
-Get-ScheduledTaskInfo -TaskName "DynatraceSQLQueryMonitor"
+-- Enable job
+EXEC msdb.dbo.sp_update_job @job_name = 'Dynatrace - Long Running Query Monitor', @enabled = 1;
+
+-- View recent job history
+SELECT TOP 20
+    j.name AS JobName,
+    h.run_date,
+    h.run_time,
+    h.run_duration,
+    CASE h.run_status
+        WHEN 0 THEN 'Failed'
+        WHEN 1 THEN 'Succeeded'
+        WHEN 2 THEN 'Retry'
+        WHEN 3 THEN 'Canceled'
+        WHEN 4 THEN 'In Progress'
+    END AS Status,
+    h.message
+FROM msdb.dbo.sysjobhistory h
+JOIN msdb.dbo.sysjobs j ON h.job_id = j.job_id
+WHERE j.name = 'Dynatrace - Long Running Query Monitor'
+ORDER BY h.run_date DESC, h.run_time DESC;
 ```
 
 ## Testing
