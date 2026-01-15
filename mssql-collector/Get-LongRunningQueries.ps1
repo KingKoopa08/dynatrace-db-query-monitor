@@ -70,7 +70,6 @@ function Main {
     $query = @"
 EXEC dbo.usp_GetLongRunningQueries
     @DefaultThresholdSeconds = $($config.sqlServer.thresholdSeconds),
-    @IncludeQueryStoreId = 1,
     @Debug = 0;
 "@
 
@@ -84,6 +83,63 @@ EXEC dbo.usp_GetLongRunningQueries
 
     $queryCount = if ($queries) { @($queries).Count } else { 0 }
     Write-Verbose "Found $queryCount long-running queries"
+
+    # Query Store enrichment using ADO.NET (lightweight, no module dependency)
+    if ($queryCount -gt 0) {
+        $queryStoreCache = @{}  # Cache: database_name -> hashtable of query_hash -> {query_id, plan_id}
+
+        # Get unique databases that have queries
+        $databases = @($queries | Select-Object -ExpandProperty database_name -Unique | Where-Object { $_ })
+
+        foreach ($dbName in $databases) {
+            try {
+                # Check if Query Store is enabled and get query IDs using ADO.NET
+                $connString = "Server=$($config.sqlServer.serverInstance);Database=$dbName;Integrated Security=True;Application Name=DynatraceMonitor"
+                $conn = New-Object System.Data.SqlClient.SqlConnection($connString)
+                $conn.Open()
+
+                # Get query hashes for this database
+                $dbQueryHashes = @($queries | Where-Object { $_.database_name -eq $dbName } | Select-Object -ExpandProperty query_hash_hex -Unique | Where-Object { $_ })
+
+                if ($dbQueryHashes.Count -gt 0) {
+                    # Build IN clause for query hashes
+                    $hashList = ($dbQueryHashes | ForEach-Object { "0x" + $_.TrimStart("0x") }) -join ","
+
+                    $qsQuery = @"
+SELECT
+    CONVERT(VARCHAR(20), q.query_hash, 1) AS query_hash_hex,
+    q.query_id,
+    (SELECT TOP 1 p.plan_id FROM sys.query_store_plan p WHERE p.query_id = q.query_id ORDER BY p.last_execution_time DESC) AS plan_id
+FROM sys.query_store_query q
+WHERE q.query_hash IN ($hashList)
+"@
+                    $cmd = $conn.CreateCommand()
+                    $cmd.CommandText = $qsQuery
+                    $cmd.CommandTimeout = 10
+
+                    $reader = $cmd.ExecuteReader()
+                    $dbCache = @{}
+                    while ($reader.Read()) {
+                        $hash = $reader["query_hash_hex"].ToString().ToUpper()
+                        $dbCache[$hash] = @{
+                            query_id = if ($reader["query_id"] -ne [DBNull]::Value) { $reader["query_id"] } else { $null }
+                            plan_id = if ($reader["plan_id"] -ne [DBNull]::Value) { $reader["plan_id"] } else { $null }
+                        }
+                    }
+                    $reader.Close()
+                    $queryStoreCache[$dbName] = $dbCache
+
+                    Write-Verbose "Query Store lookup for $dbName`: $($dbCache.Count) queries matched"
+                }
+
+                $conn.Close()
+            }
+            catch {
+                Write-Verbose "Query Store lookup failed for $dbName`: $_"
+                # Continue without Query Store data for this database
+            }
+        }
+    }
 
     # Get Dynatrace API token
     $apiToken = Get-DynatraceApiToken -Config $config
