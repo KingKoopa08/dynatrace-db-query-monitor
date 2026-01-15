@@ -2,6 +2,7 @@
 ============================================================================
 Long-Running Query Monitoring for Dynatrace
 SQL Server Deployment Script
+Version: 2.0 - Added additional diagnostic fields
 
 Run this script on each SQL Server instance you want to monitor.
 Requires: maintenance database to exist
@@ -12,7 +13,7 @@ USE [maintenance];
 GO
 
 PRINT '============================================';
-PRINT 'Deploying Long-Running Query Monitoring';
+PRINT 'Deploying Long-Running Query Monitoring v2.0';
 PRINT '============================================';
 PRINT '';
 
@@ -129,9 +130,9 @@ ELSE
 GO
 
 ----------------------------------------------------------------------
--- STEP 4: Create Main Stored Procedure
+-- STEP 4: Create Main Stored Procedure (v2.0 with additional fields)
 ----------------------------------------------------------------------
-PRINT 'Creating usp_GetLongRunningQueries procedure...';
+PRINT 'Creating usp_GetLongRunningQueries procedure v2.0...';
 GO
 
 CREATE OR ALTER PROCEDURE dbo.usp_GetLongRunningQueries
@@ -144,6 +145,7 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     DECLARE @StartTime DATETIME2 = GETDATE();
+    DECLARE @ServerName NVARCHAR(128) = @@SERVERNAME;
 
     -- Load exclusions into table variable
     DECLARE @Exclusions TABLE (
@@ -176,15 +178,24 @@ BEGIN
             CAST(NULL AS DATETIME) AS start_time,
             CAST(NULL AS INT) AS duration_seconds,
             CAST(NULL AS NVARCHAR(128)) AS database_name,
+            CAST(NULL AS NVARCHAR(128)) AS server_name,
             CAST(NULL AS NVARCHAR(30)) AS status,
             CAST(NULL AS NVARCHAR(32)) AS command,
             CAST(NULL AS NVARCHAR(60)) AS wait_type,
             CAST(NULL AS INT) AS wait_time,
+            CAST(NULL AS NVARCHAR(60)) AS last_wait_type,
             CAST(NULL AS INT) AS cpu_time,
             CAST(NULL AS BIGINT) AS reads,
             CAST(NULL AS BIGINT) AS writes,
             CAST(NULL AS BIGINT) AS logical_reads,
+            CAST(NULL AS BIGINT) AS row_count,
+            CAST(NULL AS BIGINT) AS granted_query_memory_kb,
             CAST(NULL AS INT) AS blocking_session_id,
+            CAST(NULL AS INT) AS open_transaction_count,
+            CAST(NULL AS SMALLINT) AS transaction_isolation_level,
+            CAST(NULL AS VARCHAR(20)) AS isolation_level_desc,
+            CAST(NULL AS REAL) AS percent_complete,
+            CAST(NULL AS BIGINT) AS estimated_completion_time_ms,
             CAST(NULL AS NVARCHAR(128)) AS login_name,
             CAST(NULL AS NVARCHAR(128)) AS host_name,
             CAST(NULL AS NVARCHAR(128)) AS program_name,
@@ -198,22 +209,30 @@ BEGIN
         RETURN;
     END
 
-    -- Results table variable
+    -- Results table variable with additional fields
     DECLARE @Results TABLE (
         session_id INT NOT NULL PRIMARY KEY,
         start_time DATETIME NOT NULL,
         duration_seconds INT NOT NULL,
         database_id INT NULL,
         database_name NVARCHAR(128) NULL,
+        server_name NVARCHAR(128) NULL,
         status NVARCHAR(30) NULL,
         command NVARCHAR(32) NULL,
         wait_type NVARCHAR(60) NULL,
         wait_time INT NULL,
+        last_wait_type NVARCHAR(60) NULL,
         cpu_time INT NULL,
         reads BIGINT NULL,
         writes BIGINT NULL,
         logical_reads BIGINT NULL,
+        row_count BIGINT NULL,
+        granted_query_memory_kb BIGINT NULL,
         blocking_session_id INT NULL,
+        open_transaction_count INT NULL,
+        transaction_isolation_level SMALLINT NULL,
+        percent_complete REAL NULL,
+        estimated_completion_time_ms BIGINT NULL,
         login_name NVARCHAR(128) NULL,
         host_name NVARCHAR(128) NULL,
         program_name NVARCHAR(128) NULL,
@@ -225,11 +244,13 @@ BEGIN
         plan_id BIGINT NULL
     );
 
-    -- Main collection query
+    -- Main collection query with additional diagnostic fields
     INSERT INTO @Results (
-        session_id, start_time, duration_seconds, database_id, database_name,
-        status, command, wait_type, wait_time, cpu_time, reads, writes,
-        logical_reads, blocking_session_id, login_name, host_name, program_name,
+        session_id, start_time, duration_seconds, database_id, database_name, server_name,
+        status, command, wait_type, wait_time, last_wait_type, cpu_time, reads, writes,
+        logical_reads, row_count, granted_query_memory_kb, blocking_session_id,
+        open_transaction_count, transaction_isolation_level, percent_complete,
+        estimated_completion_time_ms, login_name, host_name, program_name,
         current_statement, query_text_truncated, query_hash, query_plan_hash
     )
     SELECT
@@ -238,15 +259,23 @@ BEGIN
         DATEDIFF(SECOND, r.start_time, GETDATE()),
         r.database_id,
         DB_NAME(r.database_id),
+        @ServerName,
         r.status,
         r.command,
         ISNULL(r.wait_type, ''),
         r.wait_time,
+        ISNULL(r.last_wait_type, ''),
         r.cpu_time,
         r.reads,
         r.writes,
         r.logical_reads,
+        r.row_count,
+        r.granted_query_memory * 8,  -- Convert pages to KB
         r.blocking_session_id,
+        r.open_transaction_count,
+        r.transaction_isolation_level,
+        r.percent_complete,
+        r.estimated_completion_time,
         s.login_name,
         s.host_name,
         s.program_name,
@@ -327,11 +356,14 @@ BEGIN
                 EXEC sp_executesql @Sql,
                     N'@R TABLE (
                         session_id INT PRIMARY KEY, start_time DATETIME, duration_seconds INT,
-                        database_id INT, database_name NVARCHAR(128), status NVARCHAR(30),
-                        command NVARCHAR(32), wait_type NVARCHAR(60), wait_time INT,
-                        cpu_time INT, reads BIGINT, writes BIGINT, logical_reads BIGINT,
-                        blocking_session_id INT, login_name NVARCHAR(128),
-                        host_name NVARCHAR(128), program_name NVARCHAR(128),
+                        database_id INT, database_name NVARCHAR(128), server_name NVARCHAR(128),
+                        status NVARCHAR(30), command NVARCHAR(32), wait_type NVARCHAR(60),
+                        wait_time INT, last_wait_type NVARCHAR(60), cpu_time INT,
+                        reads BIGINT, writes BIGINT, logical_reads BIGINT, row_count BIGINT,
+                        granted_query_memory_kb BIGINT, blocking_session_id INT,
+                        open_transaction_count INT, transaction_isolation_level SMALLINT,
+                        percent_complete REAL, estimated_completion_time_ms BIGINT,
+                        login_name NVARCHAR(128), host_name NVARCHAR(128), program_name NVARCHAR(128),
                         current_statement NVARCHAR(MAX), query_text_truncated NVARCHAR(4000),
                         query_hash BINARY(8), query_plan_hash BINARY(8),
                         query_id BIGINT, plan_id BIGINT
@@ -350,21 +382,38 @@ BEGIN
         DEALLOCATE db_cursor;
     END
 
-    -- Return results
+    -- Return results with isolation level description
     SELECT
         session_id,
         start_time,
         duration_seconds,
         database_name,
+        server_name,
         status,
         command,
         wait_type,
         wait_time,
+        last_wait_type,
         cpu_time,
         reads,
         writes,
         logical_reads,
+        row_count,
+        granted_query_memory_kb,
         blocking_session_id,
+        open_transaction_count,
+        transaction_isolation_level,
+        CASE transaction_isolation_level
+            WHEN 0 THEN 'Unspecified'
+            WHEN 1 THEN 'ReadUncommitted'
+            WHEN 2 THEN 'ReadCommitted'
+            WHEN 3 THEN 'Repeatable'
+            WHEN 4 THEN 'Serializable'
+            WHEN 5 THEN 'Snapshot'
+            ELSE 'Unknown'
+        END AS isolation_level_desc,
+        percent_complete,
+        estimated_completion_time_ms,
         login_name,
         host_name,
         program_name,
@@ -382,7 +431,7 @@ BEGIN
 END;
 GO
 
-PRINT '  - usp_GetLongRunningQueries created';
+PRINT '  - usp_GetLongRunningQueries v2.0 created';
 GO
 
 ----------------------------------------------------------------------
@@ -435,10 +484,9 @@ GO
 ----------------------------------------------------------------------
 PRINT '';
 PRINT '============================================';
-PRINT 'Deployment Complete!';
+PRINT 'Deployment Complete! (v2.0)';
 PRINT '============================================';
 PRINT '';
 PRINT 'Test with: EXEC maintenance.dbo.usp_GetLongRunningQueries @Debug = 1;';
 PRINT 'View exclusions: EXEC maintenance.dbo.usp_ViewLongQueryExclusions;';
-PRINT 'Add exclusion: EXEC maintenance.dbo.usp_AddLongQueryExclusion @ExclusionType=1, @Pattern=''%pattern%'', @ThresholdSeconds=300;';
 GO
