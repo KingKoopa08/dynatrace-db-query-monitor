@@ -87,42 +87,45 @@ PRINT 'Populating default exclusions...';
 
 IF NOT EXISTS (SELECT 1 FROM dbo.LongQueryExclusions)
 BEGIN
+    -- NOTE: ThresholdSeconds must be HIGHER than default (60) to exclude queries.
+    -- Use 999999999 for "never report" (effectively infinite)
     INSERT INTO dbo.LongQueryExclusions (ExclusionType, Pattern, ThresholdSeconds, Description)
     VALUES
-        -- System/Internal (Type 1: TEXT_PATTERN)
-        (1, '%DatabaseMail%SendMail%', 60, 'Database Mail async operations'),
-        (1, '%sp_server_diagnostics%', 60, 'Always On health monitoring'),
-        (1, '%sp_hadr_%', 60, 'Always On AG procedures'),
-        (1, '%sp_cdc_scan%', 60, 'CDC capture process'),
-        (1, '%sp_cdc_cleanup%', 60, 'CDC cleanup job'),
-        (1, '%lsn_time_mapping%', 60, 'CDC LSN mapping'),
-        (1, '%sp_replcmds%', 60, 'Replication log reader'),
-        (1, '%sp_repldone%', 60, 'Replication marker'),
-        (1, '%HumanEvents%', 60, 'sp_HumanEvents monitoring'),
-        (1, '%sp_WhoIsActive%', 60, 'Activity monitoring'),
-        (1, '%sp_sqlagent_log_jobhistory%', 60, 'Agent job logging'),
+        -- System/Internal - NEVER report (Type 1: TEXT_PATTERN)
+        (1, '%DatabaseMail%SendMail%', 999999999, 'Database Mail - never report'),
+        (1, '%sp_server_diagnostics%', 999999999, 'Always On health - never report'),
+        (1, '%sp_hadr_%', 999999999, 'Always On AG - never report'),
+        (1, '%sp_cdc_scan%', 999999999, 'CDC capture - never report'),
+        (1, '%sp_cdc_cleanup%', 999999999, 'CDC cleanup - never report'),
+        (1, '%lsn_time_mapping%', 999999999, 'CDC LSN mapping - never report'),
+        (1, '%sp_replcmds%', 999999999, 'Replication reader - never report'),
+        (1, '%sp_repldone%', 999999999, 'Replication marker - never report'),
+        (1, '%HumanEvents%', 999999999, 'sp_HumanEvents - never report'),
+        (1, '%sp_WhoIsActive%', 999999999, 'Activity monitoring - never report'),
+        (1, '%sp_sqlagent_log_jobhistory%', 999999999, 'Agent logging - never report'),
 
-        -- Self-exclusion (CRITICAL)
-        (1, '%LongQueryExclusions%', 60, 'This monitoring query'),
-        (1, '%dm_exec_requests%dm_exec_sql_text%', 60, 'DMV monitoring queries'),
+        -- Self-exclusion (CRITICAL) - NEVER report
+        (1, '%LongQueryExclusions%', 999999999, 'This monitoring query - never report'),
+        (1, '%dm_exec_requests%dm_exec_sql_text%', 999999999, 'DMV queries - never report'),
+        (1, '%usp_GetLongRunningQueries%', 999999999, 'This SP - never report'),
 
-        -- Maintenance (longer thresholds)
-        (1, '%BACKUP DATABASE%', 10800, 'Full backup - 3hr'),
-        (1, '%BACKUP LOG%', 3600, 'Log backup - 1hr'),
-        (1, '%RESTORE VERIFYONLY%', 10800, 'Backup verify - 3hr'),
-        (1, '%UPDATE STATISTICS%', 21600, 'Stats update - 6hr'),
-        (1, '%ALTER INDEX%REBUILD%', 21600, 'Index rebuild - 6hr'),
-        (1, '%ALTER INDEX%REORGANIZE%', 7200, 'Index reorg - 2hr'),
-        (1, '%DBCC CHECKDB%', 14400, 'Integrity check - 4hr'),
+        -- Maintenance - report only after extended duration
+        (1, '%BACKUP DATABASE%', 10800, 'Full backup - report after 3hr'),
+        (1, '%BACKUP LOG%', 3600, 'Log backup - report after 1hr'),
+        (1, '%RESTORE VERIFYONLY%', 10800, 'Backup verify - report after 3hr'),
+        (1, '%UPDATE STATISTICS%', 21600, 'Stats update - report after 6hr'),
+        (1, '%ALTER INDEX%REBUILD%', 21600, 'Index rebuild - report after 6hr'),
+        (1, '%ALTER INDEX%REORGANIZE%', 7200, 'Index reorg - report after 2hr'),
+        (1, '%DBCC CHECKDB%', 14400, 'Integrity check - report after 4hr'),
 
         -- Commands (Type 3)
-        (3, 'BACKUP DATABASE', 10800, 'Backup command - 3hr'),
-        (3, 'BACKUP LOG', 3600, 'Log backup - 1hr'),
-        (3, 'DBCC%', 14400, 'DBCC commands - 4hr'),
+        (3, 'BACKUP DATABASE', 10800, 'Backup command - report after 3hr'),
+        (3, 'BACKUP LOG', 3600, 'Log backup - report after 1hr'),
+        (3, 'DBCC%', 14400, 'DBCC commands - report after 4hr'),
 
         -- Program names (Type 4)
-        (4, 'DatabaseMail%', 60, 'Database Mail app'),
-        (4, 'SQLAgent - Job%', 300, 'SQL Agent jobs - 5min');
+        (4, 'DatabaseMail%', 999999999, 'Database Mail app - never report'),
+        (4, 'SQLAgent - Job%', 300, 'SQL Agent jobs - report after 5min');
 
     PRINT '  - Default exclusions inserted: ' + CAST(@@ROWCOUNT AS VARCHAR);
 END
