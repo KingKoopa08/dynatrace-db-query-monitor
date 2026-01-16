@@ -318,8 +318,8 @@ EXEC dbo.usp_GetLongRunningQueries
             }
 
             # Query Store IDs from cache
-            $dbName = if ($q.database_name) { $q.database_name } else { "" }
-            $qHash = if ($q.query_hash_hex) { $q.query_hash_hex.ToUpper() } else { "" }
+            $dbName = if ($q.database_name -and $q.database_name -isnot [DBNull]) { $q.database_name } else { "" }
+            $qHash = if ($q.query_hash_hex -and $q.query_hash_hex -isnot [DBNull]) { $q.query_hash_hex.ToString().ToUpper() } else { "" }
             if ($queryStoreCache.ContainsKey($dbName) -and $queryStoreCache[$dbName].ContainsKey($qHash)) {
                 $qsData = $queryStoreCache[$dbName][$qHash]
                 if ($qsData.query_id) {
