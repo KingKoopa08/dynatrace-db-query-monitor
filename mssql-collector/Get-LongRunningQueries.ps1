@@ -172,10 +172,12 @@ WHERE q.query_hash IN ($hashList);
             if ($qsResults) {
                 $dbCache = @{}
                 foreach ($row in @($qsResults)) {
-                    $hash = $row.query_hash_hex.ToString().ToUpper()
-                    $dbCache[$hash] = @{
-                        query_id = $row.query_id
-                        plan_id = $row.plan_id
+                    if ($row.query_hash_hex -and $row.query_hash_hex -isnot [DBNull]) {
+                        $hash = $row.query_hash_hex.ToString().ToUpper()
+                        $dbCache[$hash] = @{
+                            query_id = if ($row.query_id -isnot [DBNull]) { $row.query_id } else { $null }
+                            plan_id = if ($row.plan_id -isnot [DBNull]) { $row.plan_id } else { $null }
+                        }
                     }
                 }
                 $queryStoreCache[$dbName] = $dbCache
