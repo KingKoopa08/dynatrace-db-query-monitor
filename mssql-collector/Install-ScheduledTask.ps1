@@ -201,7 +201,7 @@ function Install-MonitoringTask {
     Write-Host "  Logs:      Get-Content '$logFile' -Tail 50"
     Write-Host "  Errors:    Get-Content '$errorLogFile' -Tail 50"
     Write-Host ""
-    Write-Host "The task runs at startup and restarts automatically on failure."
+    Write-Host "The task runs at startup and checks every 10 minutes to ensure it's running."
     Write-Host ""
 
     # Ask to start
