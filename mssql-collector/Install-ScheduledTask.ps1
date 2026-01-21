@@ -184,7 +184,7 @@ function Install-MonitoringTask {
             -TaskName $TaskName `
             -TaskPath $TaskPath `
             -Action $action `
-            -Trigger $trigger `
+            -Trigger $triggers `
             -Settings $settings `
             -Principal $principal `
             -Description $TaskDescription | Out-Null
