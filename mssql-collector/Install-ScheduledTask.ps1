@@ -112,8 +112,16 @@ function Install-MonitoringTask {
         -Argument $psCommand `
         -WorkingDirectory $ScriptDir
 
-    # Trigger: At system startup
-    $trigger = New-ScheduledTaskTrigger -AtStartup
+    # Triggers:
+    # 1. At system startup
+    # 2. Repeating trigger every 10 minutes - ensures restart after maxRuntimeHours
+    #    (MultipleInstances IgnoreNew prevents duplicate instances)
+    $startupTrigger = New-ScheduledTaskTrigger -AtStartup
+
+    # Create a daily trigger with 10-minute repetition for 24 hours (effectively forever)
+    $repetitionTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Minutes 10)
+
+    $triggers = @($startupTrigger, $repetitionTrigger)
 
     # Settings
     $settings = New-ScheduledTaskSettingsSet `
